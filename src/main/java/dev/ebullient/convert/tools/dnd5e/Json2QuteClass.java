@@ -5,6 +5,7 @@ import static dev.ebullient.convert.StringUtil.join;
 import static dev.ebullient.convert.StringUtil.joinConjunct;
 import static dev.ebullient.convert.StringUtil.markdownLinkToHtml;
 import static dev.ebullient.convert.StringUtil.toAnchorTag;
+import static dev.ebullient.convert.StringUtil.toOrdinal;
 import static dev.ebullient.convert.StringUtil.toTitleCase;
 import static dev.ebullient.convert.StringUtil.uppercaseFirst;
 
@@ -13,6 +14,7 @@ import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
@@ -23,6 +25,7 @@ import dev.ebullient.convert.io.Msg;
 import dev.ebullient.convert.qute.ImageRef;
 import dev.ebullient.convert.tools.JsonNodeReader;
 import dev.ebullient.convert.tools.Tags;
+import dev.ebullient.convert.tools.ToolsIndex.TtrpgValue;
 import dev.ebullient.convert.tools.dnd5e.OptionalFeatureIndex.OptionalFeatureType;
 import dev.ebullient.convert.tools.dnd5e.qute.QuteClass;
 import dev.ebullient.convert.tools.dnd5e.qute.QuteClass.HitPointDie;
@@ -101,7 +104,11 @@ public class Json2QuteClass extends Json2QuteCommon {
     public List<QuteSubclass> buildSubclasses() {
         List<QuteSubclass> quteSc = new ArrayList<>();
 
-        for (String scKey : ClassFields.subclassKeys.getListOfStrings(rootNode, tui())) {
+        // List of subclasses may include duplicates
+        // See recovery for included subclass features that get abandoned
+        // over edition crossing
+        Set<String> subclassKeys = index.findSubclasses(getSources().getKey());
+        for (String scKey : subclassKeys) {
             JsonNode scNode = index.getNode(scKey);
             Tools5eSources scSources = Tools5eSources.findSources(scKey);
             String scName = scSources.getName();
@@ -127,6 +134,20 @@ public class Json2QuteClass extends Json2QuteCommon {
                 List<ImageRef> images = new ArrayList<>();
                 List<String> text = getFluff(scNode, Tools5eIndexType.subclassFluff, "##", images);
 
+                // A bit hacky, but the isClassic setting won't always be present for homebrew
+                // Homebrew based on the phb is considered classic
+                boolean scIsClassic = scSources.isClassic()
+                        || (TtrpgValue.isHomebrew.booleanOrDefault(scNode, false)
+                                && Tools5eFields.classSource.getTextOrDefault(scNode, "phb").equalsIgnoreCase("phb"));
+
+                if (scIsClassic && !getSources().isClassic()) {
+                    // insert warning about mixed edition content
+                    text.add(0,
+                            "> This subclass is from a different game edition. You will need to do some adjustment to resolve differences.");
+                    text.add(0, "> [!caution] Mixed edition content");
+                }
+
+                maybeAddBlankLine(text);
                 text.add("## Class Features");
                 for (ClassFeature scf : scFeatures) {
                     scf.appendText(this, text, scSources.primarySource());
@@ -192,22 +213,22 @@ public class Json2QuteClass extends Json2QuteCommon {
         }
 
         String relativePath = Tools5eIndexType.optionalFeatureTypes.getRelativePath();
-        String source = SourceField.source.getTextOrDefault(optionalFeatureProgression, primarySource);
 
         maybeAddBlankLine(text);
         text.add("## Optional Features");
         for (JsonNode ofp : iterableElements(optionalFeatureProgression)) {
             for (String featureType : Tools5eFields.featureType.getListOfStrings(ofp, tui())) {
-                OptionalFeatureType oft = index.getOptionalFeatureType(featureType, source);
+                OptionalFeatureType oft = index.getOptionalFeatureType(featureType);
                 if (oft != null) {
                     maybeAddBlankLine(text);
-                    text.add("> [!example]- " + oft.title);
+                    String title = oft.getTitle(); // this could be long if homebrew mixed
+                    text.add("> [!example]- Optional Features: " + title);
                     text.add(String.format("> ![%s](%s%s/%s.md#%s)",
-                            oft.title,
+                            title,
                             index().compendiumVaultRoot(), relativePath,
                             oft.getFilename(),
-                            toAnchorTag(oft.title)));
-                    text.add("^list-" + slugify(oft.title));
+                            toAnchorTag(title)));
+                    text.add("^list-optfeature-" + slugify(oft.abbreviation));
                 } else {
                     tui().errorf(
                             Msg.UNRESOLVED, "Can not find optional feature type %s for progression. Source: %s; Reference: %s",
@@ -560,13 +581,13 @@ public class Json2QuteClass extends Json2QuteCommon {
     String armorToLink(String armor) {
         return armor
                 .replaceAll("^light", linkify(Tools5eIndexType.itemType,
-                        sources.isClassic() ? "la|PHB|light armor" : "la|XPHB|Light armor"))
+                        sources.isClassic() ? "la|phb|light armor" : "la|xphb|Light armor"))
                 .replaceAll("^medium", linkify(Tools5eIndexType.itemType,
-                        sources.isClassic() ? "ma|PHB|medium armor" : "ma|XPHB|Medium armor"))
+                        sources.isClassic() ? "ma|phb|medium armor" : "ma|xphb|Medium armor"))
                 .replaceAll("^heavy", linkify(Tools5eIndexType.itemType,
-                        sources.isClassic() ? "ha|PHB|heavy armor" : "ha|XPHB|Heavy armor"))
+                        sources.isClassic() ? "ha|phb|heavy armor" : "ha|xphb|Heavy armor"))
                 .replaceAll("^shields?", linkify(Tools5eIndexType.item,
-                        sources.isClassic() ? "shield|PHB|shields" : "shield|XPHB|Shields"));
+                        sources.isClassic() ? "shield|phb|shields" : "shield|xphb|Shields"));
     }
 
     String skillChoices(Collection<String> skills, int numSkills) {
@@ -747,10 +768,10 @@ public class Json2QuteClass extends Json2QuteCommon {
 
     // Unpack a subclass key
     static class SubclassKeyData implements KeyData {
-        final String scName;
-        final String className;
-        final String classSource;
-        final String scSource;
+        String scName;
+        String className;
+        String classSource;
+        String scSource;
 
         public SubclassKeyData(String key) {
             String[] parts = key.split("\\|");
@@ -788,13 +809,13 @@ public class Json2QuteClass extends Json2QuteCommon {
 
     // Unpack a subclass feature key
     static class SubclassFeatureKeyData implements KeyData {
-        final String scfName;
-        final String className;
-        final String classSource;
-        final String scName;
-        final String scSource;
-        final String level;
-        final String scfSource;
+        String scfName;
+        String className;
+        String classSource;
+        String scName;
+        String scSource;
+        String level;
+        String scfSource;
 
         public SubclassFeatureKeyData(String key) {
             String[] parts = key.split("\\|");
@@ -831,6 +852,32 @@ public class Json2QuteClass extends Json2QuteCommon {
         public String itemSource() {
             return scfSource;
         }
+
+        public String toKey() {
+            return String.join("|",
+                    Tools5eIndexType.subclassFeature.name(),
+                    scfName,
+                    className, classSource,
+                    scName, scSource,
+                    level, scfSource)
+                    .toLowerCase();
+        }
+
+        public String toSubclassKey() {
+            return String.join("|",
+                    Tools5eIndexType.subclass.name(),
+                    scName,
+                    className, classSource,
+                    scSource)
+                    .toLowerCase();
+        }
+
+        public String toClassKey() {
+            return String.join("|",
+                    Tools5eIndexType.classtype.name(),
+                    className, classSource)
+                    .toLowerCase();
+        }
     }
 
     static class LevelProgression {
@@ -841,7 +888,7 @@ public class Json2QuteClass extends Json2QuteCommon {
         List<String> spellSlots = new ArrayList<>();
 
         LevelProgression(int level) {
-            this.level = JsonSource.levelToString(level);
+            this.level = toOrdinal(level);
             this.pb = "+" + JsonSource.levelToPb(level);
         }
 
@@ -960,7 +1007,6 @@ public class Json2QuteClass extends Json2QuteCommon {
         count,
         defaultEquipment("default"), // default is a reserved word
         faces,
-        featureKeys,
         from,
         full,
         gainSubclassFeature,
@@ -987,7 +1033,6 @@ public class Json2QuteClass extends Json2QuteCommon {
         startingProficiencies,
         subclassFeature,
         subclassFeatures,
-        subclassKeys,
         subclassShortName,
         subclassSource,
         subclassTableGroups,

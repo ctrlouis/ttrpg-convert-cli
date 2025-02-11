@@ -148,7 +148,7 @@ public interface JsonSource extends JsonTextReplacement {
 
         // entriesOtherSource handled here.
         if (!source.isEmpty() && !cfg().sourceIncluded(source)) {
-            if (!cfg().sourceIncluded(getSources())) {
+            if (!getSources().includedByConfig()) {
                 return;
             }
         }
@@ -925,7 +925,7 @@ public interface JsonSource extends JsonTextReplacement {
             case "C" -> "Chaotic";
             case "CE" -> "Chaotic Evil";
             case "CG" -> "Chaotic Good";
-            case "CECG" -> "Chaotic Evil or Chaotic Good";
+            case "CECG", "CGCE" -> "Chaotic Evil or Chaotic Good";
             case "CGCN" -> "Chaotic Good or Chaotic Neutral";
             case "CGNE" -> "Chaotic Good or Neutral Evil";
             case "CECN" -> "Chaotic Evil or Chaotic Neutral";
@@ -1061,25 +1061,6 @@ public interface JsonSource extends JsonTextReplacement {
         };
     }
 
-    default String levelToText(String level) {
-        return switch (level) {
-            case "0" -> "cantrip";
-            case "1" -> "1st-level";
-            case "2" -> "2nd-level";
-            case "3" -> "3rd-level";
-            default -> level + "th-level";
-        };
-    }
-
-    static String levelToString(int level) {
-        return switch (level) {
-            case 1 -> "1st";
-            case 2 -> "2nd";
-            case 3 -> "3rd";
-            default -> level + "th";
-        };
-    }
-
     static String crToTagValue(String cr) {
         return switch (cr) {
             case "1/8" -> "⅛";
@@ -1191,6 +1172,16 @@ public interface JsonSource extends JsonTextReplacement {
         return String.join(", ", result);
     }
 
+    public static String spellLevelToText(String level) {
+        return switch (level) {
+            case "0", "c" -> "cantrip";
+            case "1" -> "1st-level";
+            case "2" -> "2nd-level";
+            case "3" -> "3rd-level";
+            default -> level + "th-level";
+        };
+    }
+
     @RegisterForReflection
     @JsonIgnoreProperties(ignoreUnknown = true)
     class JsonMediaHref {
@@ -1261,7 +1252,6 @@ public interface JsonSource extends JsonTextReplacement {
         by,
         className,
         classSource,
-        classFeatureKeys, // ELH: keys for related class/subclass features
         condition, // speed, ac
         count,
         cr,

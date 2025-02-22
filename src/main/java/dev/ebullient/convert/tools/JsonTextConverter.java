@@ -238,7 +238,7 @@ public interface JsonTextConverter<T extends IndexType> {
     default String diceFormula(String diceRoll, String displayText, boolean average) {
         // don't escape the dice formula here.
         // see simplifyFormattedDiceText (called consistently from replaceText)
-        String noform = "|noform";
+        String noform = "|noform|noparens";
         String avg = "|avg";
         String dtxt = "|text(";
         String textValue = displayText == null ? "" : displayText.replace("`", "");
@@ -267,12 +267,17 @@ public interface JsonTextConverter<T extends IndexType> {
                     + " (" + codeString(match.group(3), formulaState) + ")";
         });
 
-        // 7 (`dice:1d6+4|noform|avg` (`1d6 + 4`)) --> `dice:1d6+4|noform|avg|text(7)` (`1d6 + 4`)
-        // 7 (`dice:2d6|noform|avg` (`2d6`)) --> `dice:2d6|noform|avg|text(7)` (`2d6`)
-        text = averageRoll.matcher(text).replaceAll((match) -> {
-            String dice = match.group(2) + dtxt + match.group(1) + ")";
-            return " `" + dice + "` " + match.group(3);
-        });
+        if (text.contains("reach levels")) {
+            // don't look for averages here. This is spell progression
+        } else {
+            // otherwise look for average rolls
+            // 7 (`dice:1d6+4|noform|avg` (`1d6 + 4`)) --> `dice:1d6+4|noform|avg|text(7)` (`1d6 + 4`)
+            // 7 (`dice:2d6|noform|avg` (`2d6`)) --> `dice:2d6|noform|avg|text(7)` (`2d6`)
+            text = averageRoll.matcher(text).replaceAll((match) -> {
+                String dice = match.group(2) + dtxt + match.group(1) + ")";
+                return " `" + dice + "` " + match.group(3);
+            });
+        }
 
         return parseState().inMarkdownTable()
                 ? text.replace("|", "\\|")
